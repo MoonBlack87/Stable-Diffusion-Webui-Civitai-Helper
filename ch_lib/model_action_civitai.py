@@ -445,31 +445,35 @@ def _format_match_preview(
 
 
 def _get_version_preview_images(version_info):
-    """Return allowed preview image URLs for the exact selected version."""
-    images = []
+    """
+    Fetch one displayable image from the exact selected Civitai version.
+
+    Gradio is given a decoded PIL image rather than a Civitai CDN URL. This
+    avoids browser-side CDN/CORS/auth differences and exercises the same HTTP
+    path that will later be used to create .preview.png.
+    """
     nsfw_preview_threshold = util.get_opts("ch_nsfw_threshold")
     max_size_preview = util.get_opts("ch_max_size_preview")
 
-    for image in version_info.get("images", []) or []:
-        if image.get("type") != "image":
-            continue
+    last_error = None
+    for image_info in version_info.get("images", []) or []:
+        success, image_or_error = civitai.fetch_preview_image(
+            image_info,
+            max_size_preview,
+            nsfw_preview_threshold
+        )
+        if success:
+            return [image_or_error]
 
-        rating = image.get("nsfwLevel", 32)
-        if civitai.NSFW_LEVELS[nsfw_preview_threshold] < rating:
-            continue
+        last_error = image_or_error
+        util.printD(f"Preview candidate skipped/failed: {last_error}")
 
-        url = image.get("url")
-        if not url:
-            continue
+    if last_error:
+        util.printD(f"No displayable Civitai preview found: {last_error}")
+    else:
+        util.printD("Selected Civitai version contains no preview images.")
 
-        try:
-            url = civitai.get_image_url(image, max_size_preview)
-        except (KeyError, TypeError):
-            pass
-
-        images.append(url)
-
-    return images
+    return []
 
 
 def preview_model_info_by_input(
@@ -533,6 +537,11 @@ def preview_model_info_by_input(
     )
 
     preview_images = _get_version_preview_images(version_info)
+    if not preview_images:
+        preview += (
+            "\n\n**Preview image:** Civitai returned no image that could be "
+            "downloaded and decoded with the current NSFW/API settings."
+        )
 
     return (
         preview_state,

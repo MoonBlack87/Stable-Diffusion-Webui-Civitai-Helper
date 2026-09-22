@@ -457,7 +457,13 @@ def verify_preview(path, img_dict, max_size_preview, nsfw_preview_threshold):
 
 # get preview image by model path
 # image will be saved to file, so no return
-def get_preview_image_by_model_path(model_path: str, max_size_preview, nsfw_preview_threshold, preferred_preview=None):
+def get_preview_image_by_model_path(
+    model_path: str,
+    max_size_preview,
+    nsfw_preview_threshold,
+    preferred_preview=None,
+    images=None
+):
     """
     Downloads a preview image for a model if one doesn't already exist.
     Skips images that are more NSFW than the user's NSFW threshold
@@ -485,14 +491,22 @@ def get_preview_image_by_model_path(model_path: str, max_size_preview, nsfw_prev
         yield output
         return
 
-    # load model_info file
-    if not os.path.isfile(info_file):
-        return
+    # Normally previews are loaded from the saved metadata file. The manual
+    # Civitai URL workflow can pass the exact selected version's images
+    # directly so preview creation never depends on stale metadata on disk.
+    if images is None:
+        if not os.path.isfile(info_file):
+            return
 
-    try:
-        images = model.load_model_info(info_file)["images"]
+        try:
+            images = model.load_model_info(info_file)["images"]
 
-    except (KeyError, TypeError):
+        except (KeyError, TypeError):
+            return
+
+    if not images:
+        util.printD(f"No preview images returned for model: {model_path}")
+        yield "Civitai returned no preview images for the selected model version."
         return
 
     if preferred_preview:

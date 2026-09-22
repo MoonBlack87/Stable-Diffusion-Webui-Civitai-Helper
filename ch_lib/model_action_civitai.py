@@ -463,17 +463,18 @@ def _get_version_preview_images(version_info):
             nsfw_preview_threshold
         )
         if success:
-            return [image_or_error]
+            return ([image_or_error], None)
 
         last_error = image_or_error
         util.printD(f"Preview candidate skipped/failed: {last_error}")
 
     if last_error:
         util.printD(f"No displayable Civitai preview found: {last_error}")
-    else:
-        util.printD("Selected Civitai version contains no preview images.")
+        return ([], str(last_error))
 
-    return []
+    error = "Selected Civitai version contains no preview images."
+    util.printD(error)
+    return ([], error)
 
 
 def preview_model_info_by_input(
@@ -536,11 +537,11 @@ def preview_model_info_by_input(
         fallback_version
     )
 
-    preview_images = _get_version_preview_images(version_info)
+    preview_images, preview_image_error = _get_version_preview_images(version_info)
     if not preview_images:
         preview += (
-            "\n\n**Preview image:** Civitai returned no image that could be "
-            "downloaded and decoded with the current NSFW/API settings."
+            "\n\n**Preview image:** No image could be downloaded and decoded. "
+            f"Reason: \`{preview_image_error}\`"
         )
 
     return (

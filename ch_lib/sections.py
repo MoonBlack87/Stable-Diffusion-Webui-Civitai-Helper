@@ -228,6 +228,8 @@ def get_model_info_by_url_section():
         ],
         outputs=get_model_by_id_log_md
     )
+
+
 def filter_previews(previews):
     images = []
     nsfw_preview_threshold = util.get_opts("ch_nsfw_threshold")

@@ -344,35 +344,42 @@ def get_model_names_by_input(model_type, empty_info_only):
 
 
 # get id from url
-def get_model_id_from_url(url: str, include_model_ver=False) -> str:
-    """ return: model_id from civitai url """
+def get_model_id_from_url(url: str, include_model_ver=False):
+    """
+    Return the model id from a Civitai model URL or numeric model id.
+
+    If include_model_ver is True, return a (model_id, model_version_id)
+    tuple. model_version_id is None when it is not present in the URL.
+    """
     util.printD("Run get_model_id_from_url")
-    model_id = None
-    model_version_id = None
 
     if not url:
         util.printD("url or model id can not be empty")
         return None
 
-    if url.isnumeric():
-        # is already an model_id
-        return url
+    value = str(url).strip()
+    if not value:
+        util.printD("url or model id can not be empty")
+        return None
 
-    model_m = re.search(r"/models/(\d+)", url)
-    ver_m = re.search(r"modelVersionId=(\d+)", url)
+    if value.isnumeric():
+        if include_model_ver:
+            return (value, None)
+        return value
 
-    try:
-        if model_m.group(1):
-            model_id = model_m.group(1)
-    except AttributeError:
+    model_m = re.search(r"/models/(\d+)", value, re.IGNORECASE)
+    if not model_m:
         util.printD("There is no model id in this url")
         return None
 
-    try:
-        if ver_m.group(1):
-            model_version_id = ver_m.group(1)
-    except AttributeError:
-        pass
+    model_id = model_m.group(1)
+
+    ver_m = re.search(
+        r"(?:[?&]|^)modelVersionId=(\d+)(?:&|$)",
+        value,
+        re.IGNORECASE
+    )
+    model_version_id = ver_m.group(1) if ver_m else None
 
     if not include_model_ver:
         return model_id

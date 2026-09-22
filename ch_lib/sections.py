@@ -90,13 +90,15 @@ def get_model_info_by_url_section():
                 {},
                 model_id_txtbox.update(value=""),
                 model_version_id_txtbox.update(value=""),
-                get_model_by_id_log_md.update(value="")
+                get_model_by_id_log_md.update(value=""),
+                civitai_match_preview_gallery.update(value=None)
             )
         return (
             {},
             gr.Textbox(value=""),
             gr.Textbox(value=""),
-            gr.Markdown(value="")
+            gr.Markdown(value=""),
+            gr.Gallery(value=None)
         )
 
     no_info_model_names = civitai.get_model_names_by_input("ckp", False)
@@ -161,6 +163,16 @@ def get_model_info_by_url_section():
             )
 
         with gr.Row():
+            civitai_match_preview_gallery = gr.Gallery(
+                show_label=True,
+                label="Civitai Preview - selected modelVersionId",
+                value=None,
+                allow_preview=True,
+                preview=False,
+                object_fit="scale-down"
+            )
+
+        with gr.Row():
             with gr.Column(scale=2):
                 gr.Markdown(
                     "If you edit modelId or modelVersionId, click "
@@ -196,7 +208,8 @@ def get_model_info_by_url_section():
             match_state,
             model_id_txtbox,
             model_version_id_txtbox,
-            get_model_by_id_log_md
+            get_model_by_id_log_md,
+            civitai_match_preview_gallery
         ]
     )
 
@@ -213,7 +226,8 @@ def get_model_info_by_url_section():
             match_state,
             model_id_txtbox,
             model_version_id_txtbox,
-            get_model_by_id_log_md
+            get_model_by_id_log_md,
+            civitai_match_preview_gallery
         ]
     )
 

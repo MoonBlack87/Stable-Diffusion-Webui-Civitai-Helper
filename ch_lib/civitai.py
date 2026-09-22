@@ -139,7 +139,7 @@ def append_parent_model_metadata(content):
         "allowDifferentLicense"
     ]
 
-    content["creator"] = parent_model.get("creator", "{}")
+    content["creator"] = parent_model.get("creator", {})
 
     model_metadata = content["model"]
     for metadata in metadatas:

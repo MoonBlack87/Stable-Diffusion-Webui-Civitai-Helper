@@ -56,9 +56,14 @@ def request_get(
             timeout=util.REQUEST_TIMEOUT
         )
 
-    except TimeoutError:
+    except (TimeoutError, requests.exceptions.Timeout):
         output = f"GET Request timed out for {url}"
-        print(output)
+        util.printD(output)
+        return (False, output)
+
+    except requests.exceptions.RequestException as e:
+        output = f"GET Request failed for {url}: {e}"
+        util.printD(output)
         return (False, output)
 
     if not response.ok:

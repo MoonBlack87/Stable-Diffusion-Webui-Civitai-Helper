@@ -424,6 +424,7 @@ def verify_preview(path, img_dict, max_size_preview, nsfw_preview_threshold):
     img_url = img_dict.get("url", None)
     if img_url is None:
         yield (False, None)
+        return
 
     image_rating = img_dict.get("nsfwLevel", 32)
     if image_rating > 1:
@@ -431,11 +432,13 @@ def verify_preview(path, img_dict, max_size_preview, nsfw_preview_threshold):
         if NSFW_LEVELS[nsfw_preview_threshold] < image_rating:
             util.printD("Skip NSFW image")
             yield (False, None)
+            return
 
     preview_type = img_dict.get("type")
     if preview_type != "image":
         util.printD(f"Preview is not an image. Found {preview_type} instead. Skipping.")
         yield (False, None)
+        return
 
     img_url = get_image_url(img_dict, max_size_preview)
 
@@ -450,6 +453,7 @@ def verify_preview(path, img_dict, max_size_preview, nsfw_preview_threshold):
 
     if not success:
         yield (False, None)
+        return
 
     # we only need 1 preview image
     yield (True, preview_path)

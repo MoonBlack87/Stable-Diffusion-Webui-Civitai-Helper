@@ -151,6 +151,11 @@ def get_custom_model_folder():
         folders["vae"] = vae_dir
         util.printD(f"VAE folder: {vae_dir}")
 
+    controlnet_dir = _first_existing_cmd_dir("controlnet_dir")
+    if controlnet_dir:
+        folders["controlnet"] = controlnet_dir
+        util.printD(f"ControlNet folder: {controlnet_dir}")
+
     if util.get_opts("ch_dl_lyco_to_lora"):
         folders["lycoris"] = folders["lora"]
         return

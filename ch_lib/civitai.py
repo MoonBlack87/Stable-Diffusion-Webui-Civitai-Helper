@@ -2,8 +2,10 @@
 handle msg between js and python side
 """
 
+import io
 import os
 import re
+from PIL import Image
 from . import util
 from . import model
 from . import downloader
@@ -25,7 +27,9 @@ MODEL_TYPES = {
     "LORA": "lora",
     "LoCon": "lycoris",
     "DoRA": "lora",
-    "VAE": "vae"
+    "VAE": "vae",
+    "Controlnet": "controlnet",
+    "Detection": "detection"
 }
 
 MODEL_CATEGORIES = {
@@ -50,7 +54,8 @@ FILE_TYPES = [
     "Model", "Config", "VAE" # , "Training Data"
 ]
 
-# https://github.com/civitai/civitai/blob/a7b9fbfadc0e463b568be015c381e2452e32b210/src/server/common/enums.ts#L196-L203
+# Current public Civitai API uses the NsfwLevel bitmask from
+# src/server/common/enums.ts.
 NSFW_LEVELS = {
     "PG": 1,
     "PG13": 2,
@@ -59,6 +64,21 @@ NSFW_LEVELS = {
     "XXX": 16,
     "Blocked": 32, # Probably not actually visible through the API without being logged in on model owner account?
 }
+
+
+def get_civitai_headers(accept=None):
+    """Build headers for current Civitai API/CDN requests."""
+    headers = {}
+    if accept:
+        headers["Accept"] = accept
+
+    # Keep the legacy setting key for backward compatibility. The original
+    # extension shipped this option with the "civiai" typo.
+    api_key = util.get_opts("ch_civiai_api_key")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    return headers
 
 
 def civitai_get(civitai_url: str):
@@ -70,16 +90,18 @@ def civitai_get(civitai_url: str):
     util.printD(f"Requesting Civitai: {civitai_url}")
 
     success, response = downloader.request_get(
-        civitai_url
+        civitai_url,
+        headers=get_civitai_headers("application/json")
     )
 
     if not success:
         return None
 
-    # try to get content
-    content = None
+    # Parse and close the streamed response. Public model/version endpoints are
+    # still /api/v1 in current Civitai.
     try:
-        content = response.json()
+        with response:
+            return response.json()
     except ValueError as e:
         util.printD(util.indented_msg(
             f"""
@@ -89,8 +111,6 @@ def civitai_get(civitai_url: str):
             """
         ))
         return None
-
-    return content
 
 
 def append_parent_model_metadata(content):
@@ -401,62 +421,145 @@ def preview_exists(model_path):
 
 def get_image_url(img_dict, max_size_preview):
     """
-    Create the image download URL
+    Return the image delivery URL supplied by the current Civitai API.
 
-    return: url:str
+    Current /api/v1 model and model-version responses already run image URLs
+    through Civitai's edge URL builder with original=true. Older Helper code
+    attempted to rewrite /width=N/ URL fragments, which no longer matches the
+    current edge URL contract and can produce invalid URLs.
     """
-
-    url = img_dict["url"]
-    if max_size_preview:
-        # use max width
-        width = img_dict.get("width", False)
-        if width:
-            url = re.sub(r'/width=\d+/', '/width=' + str(width) + '/', url)
-
-    return url
+    return img_dict.get("url")
 
 
-def verify_preview(path, img_dict, max_size_preview, nsfw_preview_threshold):
+def fetch_preview_image(img_dict, max_size_preview, nsfw_preview_threshold):
     """
-    Downloads a preview image if it meets the user's requirements.
+    Fetch and decode one Civitai preview image without requiring Content-Length.
+
+    Civitai's image CDN may use streaming/chunked responses, so the model-file
+    downloader (which requires Content-Length for resumable downloads) must not
+    be used for preview media.
     """
+    img_url = img_dict.get("url")
+    if not img_url:
+        return (False, "Civitai image response did not contain a URL.")
 
-    img_url = img_dict.get("url", None)
-    if img_url is None:
-        yield (False, None)
-        return
-
-    image_rating = img_dict.get("nsfwLevel", 32)
+    image_rating = img_dict.get("nsfwLevel", NSFW_LEVELS["Blocked"])
     if image_rating > 1:
         util.printD(f"This image is NSFW: {image_rating}")
-        if NSFW_LEVELS[nsfw_preview_threshold] < image_rating:
-            util.printD("Skip NSFW image")
-            yield (False, None)
-            return
+        threshold = NSFW_LEVELS.get(nsfw_preview_threshold, NSFW_LEVELS["PG"])
+        if threshold < image_rating:
+            return (False, f"Skipped preview with NSFW level {image_rating}.")
 
     preview_type = img_dict.get("type")
     if preview_type != "image":
-        util.printD(f"Preview is not an image. Found {preview_type} instead. Skipping.")
-        yield (False, None)
-        return
+        return (False, f"Preview is not an image ({preview_type}).")
 
     img_url = get_image_url(img_dict, max_size_preview)
+    if not img_url:
+        return (False, "Could not resolve Civitai preview URL.")
 
-    success = False
-    preview_path = ""
-    for result in downloader.dl_file(img_url, file_path=path):
-        if not isinstance(result, str):
-            success, preview_path = result
-            break
+    success, response_or_error = downloader.request_get(
+        img_url,
+        headers=get_civitai_headers("image/*")
+    )
+    if not success:
+        return (False, str(response_or_error))
 
-        yield result
+    response = response_or_error
+
+    try:
+        with response:
+            content_type = response.headers.get("Content-Type", "").lower()
+            if (
+                content_type
+                and not content_type.startswith("image/")
+                and (
+                    content_type.startswith("text/")
+                    or "json" in content_type
+                    or "html" in content_type
+                )
+            ):
+                return (
+                    False,
+                    f"Civitai preview returned unexpected Content-Type: {content_type}"
+                )
+
+            payload = io.BytesIO()
+            for chunk in response.iter_content(chunk_size=256 * 1024):
+                if chunk:
+                    payload.write(chunk)
+
+        if payload.tell() == 0:
+            return (False, "Civitai preview response was empty.")
+
+        payload.seek(0)
+        with Image.open(payload) as source:
+            source.seek(0)
+            source.load()
+
+            bands = source.getbands()
+            if "A" in bands:
+                image = source.convert("RGBA")
+            elif source.mode != "RGB":
+                image = source.convert("RGB")
+            else:
+                image = source.copy()
+
+        return (True, image)
+
+    except (OSError, ValueError) as e:
+        return (False, f"Could not decode Civitai preview image: {e}")
+
+
+def save_preview_image(
+    path,
+    img_dict,
+    max_size_preview,
+    nsfw_preview_threshold
+):
+    """Fetch a Civitai image and atomically save it as a real PNG."""
+    success, image_or_error = fetch_preview_image(
+        img_dict,
+        max_size_preview,
+        nsfw_preview_threshold
+    )
+    if not success:
+        return (False, image_or_error)
+
+    tmp_path = f"{path}.downloading"
+    try:
+        if os.path.isfile(tmp_path):
+            os.remove(tmp_path)
+
+        image_or_error.save(tmp_path, format="PNG")
+        os.replace(tmp_path, path)
+        util.printD(f"Preview image saved to: {path}")
+        return (True, path)
+
+    except OSError as e:
+        if os.path.isfile(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        return (False, f"Could not save preview image: {e}")
+
+
+def verify_preview(path, img_dict, max_size_preview, nsfw_preview_threshold):
+    """Download one valid Civitai preview image."""
+    success, result = save_preview_image(
+        path,
+        img_dict,
+        max_size_preview,
+        nsfw_preview_threshold
+    )
 
     if not success:
-        yield (False, None)
+        util.printD(result)
+        yield (False, result)
         return
 
-    # we only need 1 preview image
-    yield (True, preview_path)
+    yield (True, result)
 
 
 # get preview image by model path
@@ -521,30 +624,34 @@ def get_preview_image_by_model_path(
                 img_url = get_image_url(img_dict, max_size_preview)
                 break
 
-        for result in downloader.dl_file(img_url, file_path=preview_path):
-            if isinstance(result, str):
-                yield result
-                continue
+        preferred_data = {"url": img_url, "type": "image", "nsfwLevel": 1}
+        for img_dict in images:
+            if img_dict.get("url") == preferred_preview:
+                preferred_data = img_dict
+                break
 
-            success, msg = result
+        success, msg = save_preview_image(
+            preview_path,
+            preferred_data,
+            max_size_preview,
+            nsfw_preview_threshold
+        )
 
-            if success:
-                if force:
-                    for existing_preview in model.get_potential_model_preview_files(model_path):
-                        if (
-                            os.path.isfile(existing_preview)
-                            and os.path.realpath(existing_preview) != os.path.realpath(preview_path)
-                        ):
-                            try:
-                                os.remove(existing_preview)
-                            except OSError as e:
-                                util.printD(f"Could not remove old preview {existing_preview}: {e}")
-                return
+        if success:
+            if force:
+                for existing_preview in model.get_potential_model_preview_files(model_path):
+                    if (
+                        os.path.isfile(existing_preview)
+                        and os.path.realpath(existing_preview) != os.path.realpath(preview_path)
+                    ):
+                        try:
+                            os.remove(existing_preview)
+                        except OSError as e:
+                            util.printD(f"Could not remove old preview {existing_preview}: {e}")
+            return
 
-            util.printD(msg)
-            util.printD("Failed to download preferred preview. Trying to find another")
-
-            break
+        util.printD(msg)
+        util.printD("Failed to download preferred preview. Trying to find another")
 
     for img_dict in images:
         for result in verify_preview(

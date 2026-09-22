@@ -134,17 +134,22 @@ def get_custom_model_folder():
     if hypernetwork_dir:
         folders["hyper"] = hypernetwork_dir
 
-    ckpt_dir = _first_existing_cmd_dir("ckpt_dir", "ckpt_dirs")
+    # Forge Neo's explicitly configured plural directory arguments must take
+    # precedence over legacy/default singular values when both are present.
+    ckpt_dir = _first_existing_cmd_dir("ckpt_dirs", "ckpt_dir")
     if ckpt_dir:
         folders["ckp"] = ckpt_dir
+        util.printD(f"Checkpoint folder: {ckpt_dir}")
 
-    lora_dir = _first_existing_cmd_dir("lora_dir", "lora_dirs")
+    lora_dir = _first_existing_cmd_dir("lora_dirs", "lora_dir")
     if lora_dir:
         folders["lora"] = lora_dir
+        util.printD(f"LoRA folder: {lora_dir}")
 
-    vae_dir = _first_existing_cmd_dir("vae_dir", "vae_dirs")
+    vae_dir = _first_existing_cmd_dir("vae_dirs", "vae_dir")
     if vae_dir:
         folders["vae"] = vae_dir
+        util.printD(f"VAE folder: {vae_dir}")
 
     if util.get_opts("ch_dl_lyco_to_lora"):
         folders["lycoris"] = folders["lora"]

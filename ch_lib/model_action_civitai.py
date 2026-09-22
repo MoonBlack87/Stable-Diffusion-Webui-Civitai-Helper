@@ -444,6 +444,34 @@ def _format_match_preview(
     return "\n".join(lines)
 
 
+def _get_version_preview_images(version_info):
+    """Return allowed preview image URLs for the exact selected version."""
+    images = []
+    nsfw_preview_threshold = util.get_opts("ch_nsfw_threshold")
+    max_size_preview = util.get_opts("ch_max_size_preview")
+
+    for image in version_info.get("images", []) or []:
+        if image.get("type") != "image":
+            continue
+
+        rating = image.get("nsfwLevel", 32)
+        if civitai.NSFW_LEVELS[nsfw_preview_threshold] < rating:
+            continue
+
+        url = image.get("url")
+        if not url:
+            continue
+
+        try:
+            url = civitai.get_image_url(image, max_size_preview)
+        except (KeyError, TypeError):
+            pass
+
+        images.append(url)
+
+    return images
+
+
 def preview_model_info_by_input(
     model_type,
     model_name,
@@ -458,7 +486,13 @@ def preview_model_info_by_input(
     """
     model_path = model.get_model_path_by_type_and_name(model_type, model_name)
     if model_path is None:
-        return ({}, _normalize_civitai_id(model_id), _normalize_civitai_id(model_version_id), "Could not get local model path.")
+        return (
+            {},
+            _normalize_civitai_id(model_id),
+            _normalize_civitai_id(model_version_id),
+            "Could not get local model path.",
+            []
+        )
 
     model_id, model_version_id, error = _resolve_civitai_input_ids(
         model_url_or_id,
@@ -467,7 +501,7 @@ def preview_model_info_by_input(
     )
     if error:
         util.printD(error)
-        return ({}, model_id or "", model_version_id or "", error)
+        return ({}, model_id or "", model_version_id or "", error, [])
 
     (
         model_id,
@@ -479,7 +513,7 @@ def preview_model_info_by_input(
 
     if error:
         util.printD(error)
-        return ({}, model_id or "", model_version_id or "", error)
+        return ({}, model_id or "", model_version_id or "", error, [])
 
     preview_state = {
         "model_type": model_type,
@@ -498,7 +532,15 @@ def preview_model_info_by_input(
         fallback_version
     )
 
-    return (preview_state, model_id, model_version_id, preview)
+    preview_images = _get_version_preview_images(version_info)
+
+    return (
+        preview_state,
+        model_id,
+        model_version_id,
+        preview,
+        preview_images
+    )
 
 
 def apply_model_info_by_input(
@@ -569,12 +611,18 @@ def apply_model_info_by_input(
     max_size_preview = util.get_opts("ch_max_size_preview")
     nsfw_preview_threshold = util.get_opts("ch_nsfw_threshold")
 
-    model.process_model_info(model_path, model_info, model_type)
+    model.process_model_info(
+        model_path,
+        model_info,
+        model_type,
+        force_civitai=True
+    )
 
     yield from civitai.get_preview_image_by_model_path(
         model_path,
         max_size_preview,
-        nsfw_preview_threshold
+        nsfw_preview_threshold,
+        images=model_info.get("images", [])
     )
 
     yield (

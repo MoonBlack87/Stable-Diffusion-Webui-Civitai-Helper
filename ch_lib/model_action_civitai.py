@@ -622,13 +622,23 @@ def apply_model_info_by_input(
         model_path,
         max_size_preview,
         nsfw_preview_threshold,
-        images=model_info.get("images", [])
+        images=model_info.get("images", []),
+        force=True
     )
 
-    yield (
-        f"Done. Wrote Civitai metadata for modelId {model_id}, "
-        f"modelVersionId {model_version_id}."
-    )
+    base, _ = os.path.splitext(model_path)
+    preview_path = f"{base}.preview.png"
+    if os.path.isfile(preview_path):
+        yield (
+            f"Done. Wrote Civitai metadata for modelId {model_id}, "
+            f"modelVersionId {model_version_id}. Preview: {preview_path}"
+        )
+    else:
+        yield (
+            f"Done. Wrote Civitai metadata for modelId {model_id}, "
+            f"modelVersionId {model_version_id}, but no preview image was saved. "
+            "Check the messages above for the reason."
+        )
 
 def build_article_from_version(version):
     """

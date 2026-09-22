@@ -424,6 +424,7 @@ def verify_preview(path, img_dict, max_size_preview, nsfw_preview_threshold):
     img_url = img_dict.get("url", None)
     if img_url is None:
         yield (False, None)
+        return
 
     image_rating = img_dict.get("nsfwLevel", 32)
     if image_rating > 1:
@@ -431,11 +432,13 @@ def verify_preview(path, img_dict, max_size_preview, nsfw_preview_threshold):
         if NSFW_LEVELS[nsfw_preview_threshold] < image_rating:
             util.printD("Skip NSFW image")
             yield (False, None)
+            return
 
     preview_type = img_dict.get("type")
     if preview_type != "image":
         util.printD(f"Preview is not an image. Found {preview_type} instead. Skipping.")
         yield (False, None)
+        return
 
     img_url = get_image_url(img_dict, max_size_preview)
 
@@ -450,6 +453,7 @@ def verify_preview(path, img_dict, max_size_preview, nsfw_preview_threshold):
 
     if not success:
         yield (False, None)
+        return
 
     # we only need 1 preview image
     yield (True, preview_path)
@@ -457,7 +461,14 @@ def verify_preview(path, img_dict, max_size_preview, nsfw_preview_threshold):
 
 # get preview image by model path
 # image will be saved to file, so no return
-def get_preview_image_by_model_path(model_path: str, max_size_preview, nsfw_preview_threshold, preferred_preview=None):
+def get_preview_image_by_model_path(
+    model_path: str,
+    max_size_preview,
+    nsfw_preview_threshold,
+    preferred_preview=None,
+    images=None,
+    force=False
+):
     """
     Downloads a preview image for a model if one doesn't already exist.
     Skips images that are more NSFW than the user's NSFW threshold
@@ -479,20 +490,28 @@ def get_preview_image_by_model_path(model_path: str, max_size_preview, nsfw_prev
     # need to download preview image
     util.printD(f"Checking preview image for model: {model_path}")
 
-    if preview_exists(model_path):
+    if preview_exists(model_path) and not force:
         output = "Existing model image found. Skipping."
         util.printD(output)
         yield output
         return
 
-    # load model_info file
-    if not os.path.isfile(info_file):
-        return
+    # Normally previews are loaded from the saved metadata file. The manual
+    # Civitai URL workflow can pass the exact selected version's images
+    # directly so preview creation never depends on stale metadata on disk.
+    if images is None:
+        if not os.path.isfile(info_file):
+            return
 
-    try:
-        images = model.load_model_info(info_file)["images"]
+        try:
+            images = model.load_model_info(info_file)["images"]
 
-    except (KeyError, TypeError):
+        except (KeyError, TypeError):
+            return
+
+    if not images:
+        util.printD(f"No preview images returned for model: {model_path}")
+        yield "Civitai returned no preview images for the selected model version."
         return
 
     if preferred_preview:
@@ -510,6 +529,16 @@ def get_preview_image_by_model_path(model_path: str, max_size_preview, nsfw_prev
             success, msg = result
 
             if success:
+                if force:
+                    for existing_preview in model.get_potential_model_preview_files(model_path):
+                        if (
+                            os.path.isfile(existing_preview)
+                            and os.path.realpath(existing_preview) != os.path.realpath(preview_path)
+                        ):
+                            try:
+                                os.remove(existing_preview)
+                            except OSError as e:
+                                util.printD(f"Could not remove old preview {existing_preview}: {e}")
                 return
 
             util.printD(msg)
@@ -525,6 +554,16 @@ def get_preview_image_by_model_path(model_path: str, max_size_preview, nsfw_prev
                 success, _ = result
                 # Only download one image
                 if success:
+                    if force:
+                        for existing_preview in model.get_potential_model_preview_files(model_path):
+                            if (
+                                os.path.isfile(existing_preview)
+                                and os.path.realpath(existing_preview) != os.path.realpath(preview_path)
+                            ):
+                                try:
+                                    os.remove(existing_preview)
+                                except OSError as e:
+                                    util.printD(f"Could not remove old preview {existing_preview}: {e}")
                     return
 
                 break

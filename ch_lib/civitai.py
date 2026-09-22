@@ -5,6 +5,7 @@ handle msg between js and python side
 import io
 import os
 import re
+import urllib.parse
 from PIL import Image
 from . import util
 from . import model
@@ -66,7 +67,7 @@ NSFW_LEVELS = {
 }
 
 
-def get_civitai_headers(accept=None):
+def get_civitai_headers(accept=None, url=None):
     """Build headers for current Civitai API/CDN requests."""
     headers = {}
     if accept:
@@ -74,8 +75,17 @@ def get_civitai_headers(accept=None):
 
     # Keep the legacy setting key for backward compatibility. The original
     # extension shipped this option with the "civiai" typo.
+    #
+    # Never forward the user's Civitai API key to an arbitrary external image
+    # host. Current Civitai edge URLs normally use civitai.com subdomains, but
+    # getEdgeUrl intentionally preserves already-absolute source URLs.
+    send_auth = True
+    if url:
+        hostname = (urllib.parse.urlparse(url).hostname or "").lower()
+        send_auth = hostname == "civitai.com" or hostname.endswith(".civitai.com")
+
     api_key = util.get_opts("ch_civiai_api_key")
-    if api_key:
+    if api_key and send_auth:
         headers["Authorization"] = f"Bearer {api_key}"
 
     return headers
@@ -91,7 +101,7 @@ def civitai_get(civitai_url: str):
 
     success, response = downloader.request_get(
         civitai_url,
-        headers=get_civitai_headers("application/json")
+        headers=get_civitai_headers("application/json", civitai_url)
     )
 
     if not success:
@@ -460,7 +470,7 @@ def fetch_preview_image(img_dict, max_size_preview, nsfw_preview_threshold):
 
     success, response_or_error = downloader.request_get(
         img_url,
-        headers=get_civitai_headers("image/*")
+        headers=get_civitai_headers("image/*", img_url)
     )
     if not success:
         return (False, str(response_or_error))

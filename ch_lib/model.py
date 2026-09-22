@@ -267,7 +267,13 @@ def write_info(data, path, info_type):
         info_file.write(json.dumps(data, indent=4))
 
 
-def process_model_info(model_path, model_info, model_type="ckp", refetch_old=False):
+def process_model_info(
+    model_path,
+    model_info,
+    model_type="ckp",
+    refetch_old=False,
+    force_civitai=False
+):
     """
     Write model info to file
 
@@ -359,7 +365,13 @@ def process_model_info(model_path, model_info, model_type="ckp", refetch_old=Fal
                     updated = True
 
     # civitai model info file
-    if metadata_needed_for_type(info_file, "civitai", refetch_old) or updated:
+    #
+    # The manual "Get Model Info by URL" workflow has an explicit preview +
+    # confirmation step. In that workflow force_civitai=True intentionally
+    # replaces stale/incorrect Civitai metadata for the selected local file.
+    if force_civitai:
+        write_info(model_info, info_file, "civitai")
+    elif metadata_needed_for_type(info_file, "civitai", refetch_old) or updated:
         if refetch_old:
             try:
                 if verify_overwrite_eligibility(info_file, model_info):

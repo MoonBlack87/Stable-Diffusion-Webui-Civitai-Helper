@@ -5,7 +5,6 @@ import glob
 import os
 import json
 import re
-import urllib.parse
 from PIL import Image
 import piexif
 import piexif.helper
@@ -150,6 +149,11 @@ def get_custom_model_folder():
     if vae_dir:
         folders["vae"] = vae_dir
         util.printD(f"VAE folder: {vae_dir}")
+
+    controlnet_dir = _first_existing_cmd_dir("controlnet_dir")
+    if controlnet_dir:
+        folders["controlnet"] = controlnet_dir
+        util.printD(f"ControlNet folder: {controlnet_dir}")
 
     if util.get_opts("ch_dl_lyco_to_lora"):
         folders["lycoris"] = folders["lora"]
@@ -344,21 +348,21 @@ def process_model_info(
                     img["local_file"] = existing_dl
 
                 else:
-                    # Fetch it, save it, set it in the model info.
-                    path = urllib.parse.urlparse(url).path
-                    _, ext = os.path.splitext(path)
-                    outpath = next_example_image_path(model_path) + ext
-
-                    for result in downloader.dl_file(
-                            url,
-                            folder=os.path.dirname(outpath),
-                            filename=os.path.basename(outpath)):
-                        if not isinstance(result, str):
-                            success, output = result
-                            break
+                    # Civitai's current image CDN may not return Content-Length,
+                    # so use the media-aware image fetcher instead of the
+                    # resumable model-file downloader. Store a real PNG so the
+                    # extension never creates files whose extension disagrees
+                    # with their image bytes.
+                    outpath = next_example_image_path(model_path) + ".png"
+                    success, output = civitai.save_preview_image(
+                        outpath,
+                        img,
+                        util.get_opts("ch_max_size_preview"),
+                        nsfw_preview_threshold
+                    )
 
                     if not success:
-                        downloader.error(url, "Failed to download model image.")
+                        downloader.error(url, output)
                         continue
 
                     img["local_file"] = outpath

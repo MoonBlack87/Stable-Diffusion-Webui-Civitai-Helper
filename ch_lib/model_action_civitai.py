@@ -541,7 +541,7 @@ def preview_model_info_by_input(
     if not preview_images:
         preview += (
             "\n\n**Preview image:** No image could be downloaded and decoded. "
-            f"Reason: \`{preview_image_error}\`"
+            f"Reason: {preview_image_error}"
         )
 
     return (

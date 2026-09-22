@@ -462,7 +462,8 @@ def get_preview_image_by_model_path(
     max_size_preview,
     nsfw_preview_threshold,
     preferred_preview=None,
-    images=None
+    images=None,
+    force=False
 ):
     """
     Downloads a preview image for a model if one doesn't already exist.
@@ -485,7 +486,7 @@ def get_preview_image_by_model_path(
     # need to download preview image
     util.printD(f"Checking preview image for model: {model_path}")
 
-    if preview_exists(model_path):
+    if preview_exists(model_path) and not force:
         output = "Existing model image found. Skipping."
         util.printD(output)
         yield output
@@ -524,6 +525,16 @@ def get_preview_image_by_model_path(
             success, msg = result
 
             if success:
+                if force:
+                    for existing_preview in model.get_potential_model_preview_files(model_path):
+                        if (
+                            os.path.isfile(existing_preview)
+                            and os.path.realpath(existing_preview) != os.path.realpath(preview_path)
+                        ):
+                            try:
+                                os.remove(existing_preview)
+                            except OSError as e:
+                                util.printD(f"Could not remove old preview {existing_preview}: {e}")
                 return
 
             util.printD(msg)
@@ -539,6 +550,16 @@ def get_preview_image_by_model_path(
                 success, _ = result
                 # Only download one image
                 if success:
+                    if force:
+                        for existing_preview in model.get_potential_model_preview_files(model_path):
+                            if (
+                                os.path.isfile(existing_preview)
+                                and os.path.realpath(existing_preview) != os.path.realpath(preview_path)
+                            ):
+                                try:
+                                    os.remove(existing_preview)
+                                except OSError as e:
+                                    util.printD(f"Could not remove old preview {existing_preview}: {e}")
                     return
 
                 break

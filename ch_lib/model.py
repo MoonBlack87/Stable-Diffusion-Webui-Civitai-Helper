@@ -5,7 +5,6 @@ import glob
 import os
 import json
 import re
-import urllib.parse
 from PIL import Image
 import piexif
 import piexif.helper

@@ -273,51 +273,314 @@ def dummy_model_info(path, sha256_hash, model_type):
     return model_info
 
 
-def get_model_info_by_input(
-    model_type, model_name, model_url_or_id
+def _normalize_civitai_id(value):
+    """Return a trimmed Civitai id string."""
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _resolve_civitai_input_ids(model_url_or_id, model_id="", model_version_id=""):
+    """
+    Resolve editable model/version id fields.
+
+    When either editable id field contains a value, those fields are treated as
+    authoritative. This lets the user change or clear a version id after the
+    initial URL preview without the URL silently overriding the edit.
+    """
+    model_id = _normalize_civitai_id(model_id)
+    model_version_id = _normalize_civitai_id(model_version_id)
+
+    if not model_id and not model_version_id:
+        parsed = civitai.get_model_id_from_url(
+            model_url_or_id,
+            include_model_ver=True
+        )
+        if not parsed:
+            return (None, None, f"Failed to parse Civitai model id from: {model_url_or_id}")
+
+        model_id, model_version_id = parsed
+        model_id = _normalize_civitai_id(model_id)
+        model_version_id = _normalize_civitai_id(model_version_id)
+
+    if model_id and not model_id.isnumeric():
+        return (None, None, f"Invalid Civitai model id: {model_id}")
+
+    if model_version_id and not model_version_id.isnumeric():
+        return (None, None, f"Invalid Civitai model version id: {model_version_id}")
+
+    if not model_id and not model_version_id:
+        return (None, None, "A model id or model version id is required.")
+
+    return (model_id, model_version_id, None)
+
+
+def _get_exact_version_info(model_id, model_version_id):
+    """
+    Fetch exactly the requested model version and verify that it belongs to the
+    requested parent model.
+
+    If no version id is provided, Civitai's first listed version is selected
+    explicitly and returned to the UI for confirmation before anything is
+    written.
+    """
+    fallback_version = False
+
+    if model_version_id:
+        version_info = civitai.get_version_info_by_version_id(model_version_id)
+        if not version_info:
+            return (None, None, None, f"Could not retrieve model version {model_version_id}.", False)
+
+        actual_model_id = _normalize_civitai_id(version_info.get("modelId"))
+        if not actual_model_id:
+            return (None, None, None, "Civitai response did not include a parent model id.", False)
+
+        if model_id and actual_model_id != model_id:
+            return (
+                None,
+                None,
+                None,
+                (
+                    f"Model/version mismatch: version {model_version_id} belongs to "
+                    f"model {actual_model_id}, not model {model_id}."
+                ),
+                False
+            )
+
+        return (
+            actual_model_id,
+            _normalize_civitai_id(version_info.get("id")) or model_version_id,
+            version_info,
+            None,
+            False
+        )
+
+    if not model_id:
+        return (None, None, None, "A model id is required when no version id is supplied.", False)
+
+    version_info = civitai.get_version_info_by_model_id(model_id)
+    if not version_info:
+        return (None, None, None, f"Could not retrieve a version for model {model_id}.", False)
+
+    selected_version_id = _normalize_civitai_id(version_info.get("id"))
+    if not selected_version_id:
+        return (None, None, None, "Civitai response did not include a model version id.", False)
+
+    fallback_version = True
+    return (model_id, selected_version_id, version_info, None, fallback_version)
+
+
+def _model_types_compatible(local_type, civitai_type):
+    """LoRA and LyCORIS are compatible storage targets for this workflow."""
+    if not civitai_type:
+        return True
+    if local_type == civitai_type:
+        return True
+    return {local_type, civitai_type}.issubset({"lora", "lycoris"})
+
+
+def _format_match_preview(
+    model_path,
+    local_model_type,
+    model_id,
+    model_version_id,
+    version_info,
+    fallback_version
+):
+    """Build a compact, human-readable preview of the exact Civitai match."""
+    parent = version_info.get("model", {}) or {}
+    civitai_type_name = parent.get("type", "Unknown")
+    civitai_local_type = civitai.MODEL_TYPES.get(civitai_type_name)
+
+    remote_name = parent.get("name", "Unknown")
+    version_name = version_info.get("name", "Unknown")
+    base_model = version_info.get("baseModel", "Unknown")
+
+    model_files = [
+        file_info.get("name", "")
+        for file_info in version_info.get("files", [])
+        if file_info.get("type") == "Model"
+    ]
+    model_files = [name for name in model_files if name]
+    file_text = ", ".join(model_files) if model_files else "Unknown"
+
+    trained_words = version_info.get("trainedWords", []) or []
+    trained_words_text = ", ".join(trained_words[:10]) if trained_words else "None"
+    if len(trained_words) > 10:
+        trained_words_text += ", ..."
+
+    warning_lines = []
+    if fallback_version:
+        warning_lines.append(
+            "**Warning:** No modelVersionId was supplied. The first version "
+            "returned by Civitai was selected. Review the version id before writing."
+        )
+
+    if not _model_types_compatible(local_model_type, civitai_local_type):
+        warning_lines.append(
+            f"**Warning:** Local type is `{local_model_type}`, but Civitai maps "
+            f"this model to `{civitai_local_type}` ({civitai_type_name})."
+        )
+
+    lines = [
+        "### Civitai match preview",
+        "",
+        f"- Local file: `{model_path}`",
+        f"- Civitai model: **{remote_name}** — modelId `{model_id}`",
+        f"- Version: **{version_name}** — modelVersionId `{model_version_id}`",
+        f"- Civitai type: `{civitai_type_name}`",
+        f"- Base model: `{base_model}`",
+        f"- Model file(s): `{file_text}`",
+        f"- Trained words: {trained_words_text}",
+        "",
+        "**Nothing has been written yet.** Review or edit the ids, click "
+        "**Get Model Info from Civitai** again if you changed them, then use "
+        "**Write Selected Model Info**."
+    ]
+
+    if warning_lines:
+        lines.extend([""] + warning_lines)
+
+    return "\n".join(lines)
+
+
+def preview_model_info_by_input(
+    model_type,
+    model_name,
+    model_url_or_id,
+    model_id="",
+    model_version_id=""
 ):
     """
-    Get model info by model type, name and url
-    output is log info to display on markdown component
+    Resolve a local model against Civitai without writing files.
+
+    Returns a confirmation state plus editable model/version ids and a preview.
     """
-    output = ""
+    model_path = model.get_model_path_by_type_and_name(model_type, model_name)
+    if model_path is None:
+        return ({}, _normalize_civitai_id(model_id), _normalize_civitai_id(model_version_id), "Could not get local model path.")
+
+    model_id, model_version_id, error = _resolve_civitai_input_ids(
+        model_url_or_id,
+        model_id,
+        model_version_id
+    )
+    if error:
+        util.printD(error)
+        return ({}, model_id or "", model_version_id or "", error)
+
+    (
+        model_id,
+        model_version_id,
+        version_info,
+        error,
+        fallback_version
+    ) = _get_exact_version_info(model_id, model_version_id)
+
+    if error:
+        util.printD(error)
+        return ({}, model_id or "", model_version_id or "", error)
+
+    preview_state = {
+        "model_type": model_type,
+        "model_name": model_name,
+        "model_path": model_path,
+        "model_id": model_id,
+        "model_version_id": model_version_id,
+    }
+
+    preview = _format_match_preview(
+        model_path,
+        model_type,
+        model_id,
+        model_version_id,
+        version_info,
+        fallback_version
+    )
+
+    return (preview_state, model_id, model_version_id, preview)
+
+
+def apply_model_info_by_input(
+    preview_state,
+    model_type,
+    model_name,
+    model_id,
+    model_version_id
+):
+    """
+    Write metadata only for the exact model/version pair that was previewed.
+    """
+    model_id = _normalize_civitai_id(model_id)
+    model_version_id = _normalize_civitai_id(model_version_id)
+
+    if not preview_state:
+        yield "Preview the Civitai match before writing."
+        return
+
+    expected = {
+        "model_type": model_type,
+        "model_name": model_name,
+        "model_id": model_id,
+        "model_version_id": model_version_id,
+    }
+    for key, value in expected.items():
+        if _normalize_civitai_id(preview_state.get(key)) != _normalize_civitai_id(value):
+            yield "The model selection or ids changed after the preview. Preview the match again before writing."
+            return
+
+    model_path = model.get_model_path_by_type_and_name(model_type, model_name)
+    if model_path is None:
+        yield "Could not get local model path."
+        return
+
+    if os.path.realpath(model_path) != os.path.realpath(preview_state.get("model_path", "")):
+        yield "The local model path changed after the preview. Preview the match again before writing."
+        return
+
+    (
+        actual_model_id,
+        actual_version_id,
+        model_info,
+        error,
+        _
+    ) = _get_exact_version_info(model_id, model_version_id)
+
+    if error:
+        util.printD(error)
+        yield error
+        return
+
+    if actual_model_id != model_id or actual_version_id != model_version_id:
+        yield "Civitai returned different ids than the previewed selection. Nothing was written."
+        return
+
+    parent = model_info.get("model", {}) or {}
+    civitai_type_name = parent.get("type")
+    civitai_local_type = civitai.MODEL_TYPES.get(civitai_type_name)
+
+    if not _model_types_compatible(model_type, civitai_local_type):
+        yield (
+            f"Model type mismatch: local type is {model_type}, but Civitai "
+            f"reports {civitai_type_name} ({civitai_local_type}). Nothing was written."
+        )
+        return
 
     max_size_preview = util.get_opts("ch_max_size_preview")
     nsfw_preview_threshold = util.get_opts("ch_nsfw_threshold")
 
-    # parse model id
-    model_id = civitai.get_model_id_from_url(model_url_or_id)
-    if not model_id:
-        output = f"failed to parse model id from url: {model_url_or_id}"
-        util.printD(output)
-        yield output
-        return
-
-    # get model file path
-    # model could be in subfolder
-    model_path = model.get_model_path_by_type_and_name(model_type, model_name)
-
-    if model_path is None:
-        output = "Could not get Model Path"
-        util.printD(output)
-        yield output
-        return
-
-    # get model info
-    #we call it model_info, but in civitai, it is actually version info
-    model_info = civitai.get_version_info_by_model_id(model_id)
-
     model.process_model_info(model_path, model_info, model_type)
 
-    # check preview image + webui-visible progress bar
     yield from civitai.get_preview_image_by_model_path(
         model_path,
         max_size_preview,
         nsfw_preview_threshold
     )
 
-    yield output
-
+    yield (
+        f"Done. Wrote Civitai metadata for modelId {model_id}, "
+        f"modelVersionId {model_version_id}."
+    )
 
 def build_article_from_version(version):
     """

@@ -83,11 +83,31 @@ def get_model_info_by_url_section():
             return model_name_drop.update(choices=names)
         return gr.Dropdown(choices=names)
 
+    def reset_civitai_match():
+        """Clear ids/state when the source URL changes."""
+        if util.GRADIO_FALLBACK:
+            return (
+                {},
+                model_id_txtbox.update(value=""),
+                model_version_id_txtbox.update(value=""),
+                get_model_by_id_log_md.update(value="")
+            )
+        return (
+            {},
+            gr.Textbox(value=""),
+            gr.Textbox(value=""),
+            gr.Markdown(value="")
+        )
+
     no_info_model_names = civitai.get_model_names_by_input("ckp", False)
+    match_state = gr.State({})
 
     with gr.Column():
         gr.Markdown("### Get Model Info from Civitai by URL")
-        gr.Markdown("Use this when scanning can not find a local model on civitai")
+        gr.Markdown(
+            "Preview the exact Civitai model/version first. Metadata is only "
+            "written after explicit confirmation."
+        )
         with gr.Row():
             with gr.Column(scale=2):
                 model_type_drop = gr.Dropdown(
@@ -117,12 +137,39 @@ def get_model_info_by_url_section():
                 model_url_or_id_txtbox = gr.Textbox(
                     label="Civitai URL",
                     lines=1,
-                    value=""
+                    value="",
+                    placeholder="Model URL or modelId"
                 )
             with gr.Column(scale=1, elem_classes="justify-bottom"):
                 get_civitai_model_info_by_id_btn = gr.Button(
                     value="Get Model Info from Civitai",
                     variant="primary"
+                )
+
+        with gr.Row():
+            model_id_txtbox = gr.Textbox(
+                label="modelId",
+                lines=1,
+                value="",
+                placeholder="Editable after preview"
+            )
+            model_version_id_txtbox = gr.Textbox(
+                label="modelVersionId",
+                lines=1,
+                value="",
+                placeholder="Editable after preview"
+            )
+
+        with gr.Row():
+            with gr.Column(scale=2):
+                gr.Markdown(
+                    "If you edit modelId or modelVersionId, click "
+                    "**Get Model Info from Civitai** again to refresh the preview."
+                )
+            with gr.Column(scale=1, elem_classes="justify-bottom"):
+                write_civitai_model_info_btn = gr.Button(
+                    value="Write Selected Model Info",
+                    variant="secondary"
                 )
 
     get_model_by_id_log_md = gr.Markdown("")
@@ -143,14 +190,45 @@ def get_model_info_by_url_section():
         outputs=model_name_drop
     )
 
+    model_url_or_id_txtbox.change(
+        reset_civitai_match,
+        outputs=[
+            match_state,
+            model_id_txtbox,
+            model_version_id_txtbox,
+            get_model_by_id_log_md
+        ]
+    )
+
     get_civitai_model_info_by_id_btn.click(
-        model_action_civitai.get_model_info_by_input,
+        model_action_civitai.preview_model_info_by_input,
         inputs=[
-            model_type_drop, model_name_drop,
-            model_url_or_id_txtbox
+            model_type_drop,
+            model_name_drop,
+            model_url_or_id_txtbox,
+            model_id_txtbox,
+            model_version_id_txtbox
+        ],
+        outputs=[
+            match_state,
+            model_id_txtbox,
+            model_version_id_txtbox,
+            get_model_by_id_log_md
+        ]
+    )
+
+    write_civitai_model_info_btn.click(
+        model_action_civitai.apply_model_info_by_input,
+        inputs=[
+            match_state,
+            model_type_drop,
+            model_name_drop,
+            model_id_txtbox,
+            model_version_id_txtbox
         ],
         outputs=get_model_by_id_log_md
     )
+
 
 def filter_previews(previews):
     images = []

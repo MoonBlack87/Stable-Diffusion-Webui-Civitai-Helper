@@ -95,27 +95,56 @@ def next_example_image_path(model_path):
     return f"{base_path}.example.{i}"
 
 
+def _first_existing_cmd_dir(*option_names):
+    """
+    Return the first existing directory configured by one of the given
+    command-line options.
+
+    Automatic1111-style options use singular values (for example ckpt_dir),
+    while Forge Neo uses plural list values (for example ckpt_dirs).
+    """
+    for option_name in option_names:
+        value = getattr(shared.cmd_opts, option_name, None)
+        if not value:
+            continue
+
+        values = value if isinstance(value, (list, tuple)) else [value]
+        for directory in values:
+            if directory and os.path.isdir(directory):
+                return directory
+
+    return None
+
+
 # get custom model path
 def get_custom_model_folder():
     """
     Update extra network directories with user-specified values.
+
+    Supports both Automatic1111-style singular options and Forge Neo's
+    plural directory options.
     """
     util.printD("Get Custom Model Folder")
 
-    if hasattr(shared.cmd_opts, "embeddings_dir") and shared.cmd_opts.embeddings_dir and os.path.isdir(shared.cmd_opts.embeddings_dir):
-        folders["ti"] = shared.cmd_opts.embeddings_dir
+    embeddings_dir = _first_existing_cmd_dir("embeddings_dir")
+    if embeddings_dir:
+        folders["ti"] = embeddings_dir
 
-    if hasattr(shared.cmd_opts, "hypernetwork_dir") and shared.cmd_opts.hypernetwork_dir and os.path.isdir(shared.cmd_opts.hypernetwork_dir):
-        folders["hyper"] = shared.cmd_opts.hypernetwork_dir
+    hypernetwork_dir = _first_existing_cmd_dir("hypernetwork_dir")
+    if hypernetwork_dir:
+        folders["hyper"] = hypernetwork_dir
 
-    if hasattr(shared.cmd_opts, "ckpt_dir") and shared.cmd_opts.ckpt_dir and os.path.isdir(shared.cmd_opts.ckpt_dir):
-        folders["ckp"] = shared.cmd_opts.ckpt_dir
+    ckpt_dir = _first_existing_cmd_dir("ckpt_dir", "ckpt_dirs")
+    if ckpt_dir:
+        folders["ckp"] = ckpt_dir
 
-    if hasattr(shared.cmd_opts, "lora_dir") and shared.cmd_opts.lora_dir and os.path.isdir(shared.cmd_opts.lora_dir):
-        folders["lora"] = shared.cmd_opts.lora_dir
+    lora_dir = _first_existing_cmd_dir("lora_dir", "lora_dirs")
+    if lora_dir:
+        folders["lora"] = lora_dir
 
-    if hasattr(shared.cmd_opts, "vae_dir") and shared.cmd_opts.vae_dir and os.path.isdir(shared.cmd_opts.vae_dir):
-        folders["vae"] = shared.cmd_opts.vae_dir
+    vae_dir = _first_existing_cmd_dir("vae_dir", "vae_dirs")
+    if vae_dir:
+        folders["vae"] = vae_dir
 
     if util.get_opts("ch_dl_lyco_to_lora"):
         folders["lycoris"] = folders["lora"]
